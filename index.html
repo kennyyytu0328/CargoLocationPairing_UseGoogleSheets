@@ -350,7 +350,18 @@ async function syncQueue(){
    ============================== */
 let codeReader;
 try {
-  codeReader = new ZXing.BrowserMultiFormatReader();
+  // 配置支援的條碼格式
+  const hints = new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+    ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.CODE_128,
+    ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.QR_CODE
+  ]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  codeReader = new ZXing.BrowserMultiFormatReader(hints);
+  console.log('ZXing 已初始化，支援條碼格式：EAN-13/8, Code128/39, QR Code');
 } catch (e) {
   console.error('ZXing 載入失敗:', e);
   alert('條碼掃描功能載入失敗，請檢查網路連線');
@@ -364,14 +375,35 @@ async function startCamera(){
     return;
   }
   try {
-    // 後鏡頭優先
-    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
-    video.srcObject = stream; await video.play();
+    // 後鏡頭優先，提升分辨率和對焦參數
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:{ideal:'environment'},
+        width:{min:400, ideal:1280, max:1920},
+        height:{min:400, ideal:720, max:1080}
+      },
+      audio:false
+    });
+    video.srcObject = stream; 
+    await video.play();
     currentTrack = stream.getVideoTracks()[0];
     setText('camInfo', currentTrack.getSettings().facingMode||'');
+    
+    // 嘗試開啟自動對焦
+    try {
+      await currentTrack.applyConstraints({ advanced:[{ focusMode:'continuous' }] });
+    } catch(e) { console.warn('自動對焦設定失敗:', e); }
+    
     // 連續解碼 - 使用 undefined 而非 null
+    console.log('開始解碼...');
     codeReader.decodeFromVideoDevice(undefined, video, (result, err)=>{
-      if(result){ onBarcode(result.getText()); }
+      if(result){ 
+        console.log('✓ 成功讀取條碼:', result.getText());
+        onBarcode(result.getText()); 
+      }
+      if(err && err.name !== 'NotFoundException') {
+        console.warn('解碼警告:', err.message);
+      }
     });
   } catch (e) {
     console.error('相機啟動失敗:', e);
@@ -402,19 +434,39 @@ async function doFocus(){
 
 /* 條碼回調：依目前頁面狀態路由 */
 function onBarcode(text){
-  vibrate(20); beep();
+  if(!text || text.trim() === '') return; // 忽略空字串
+  
+  vibrate([50, 100, 50]); // 雙次振動
+  beep();
+  console.log('條碼已路由:', text);
+  
   const activeInbound = !document.getElementById('pageInbound').classList.contains('hidden');
   const activeStaging = !document.getElementById('pageStaging').classList.contains('hidden');
   if(activeInbound){
     // 先有棧板，之後都當作 item
-    if(!palletCode){ document.getElementById('palletInput').value = text; } 
-    else { document.getElementById('itemInput').value = text; pushItem(); }
+    if(!palletCode){ 
+      document.getElementById('palletInput').value = text;
+      console.log('✓ 棧板碼已設定');
+    } 
+    else { 
+      document.getElementById('itemInput').value = text; 
+      console.log('✓ 貨件碼已設定，準備上傳...');
+      pushItem(); 
+    }
   }else if(activeStaging){
     const t = document.getElementById('targetInput').value;
-    if(!t){ document.getElementById('targetInput').value = text; }
-    else { document.getElementById('zoneInput').value = text; pushStaging(); }
+    if(!t){ 
+      document.getElementById('targetInput').value = text;
+      console.log('✓ 目標碼已設定');
+    }
+    else { 
+      document.getElementById('zoneInput').value = text;
+      console.log('✓ 區位碼已設定，準備上傳...');
+      pushStaging(); 
+    }
   }else{
     document.getElementById('queryCode').value = text;
+    console.log('✓ 查詢碼已設定');
   }
 }
 
@@ -531,14 +583,26 @@ document.getElementById('btnScanStation').onclick = ()=>{
     alert('ZXing 條碼掃描功能未載入，請重新整理頁面');
     return;
   }
-  alert('把鏡頭對準站點條碼後，再點一次此按鈕以套用'); 
-  const onOnce = (txt)=>{ document.getElementById('stationId').value = txt; codeReader.reset(); };
+  alert('把鏡頭對準站點條碼後，稍候等待掃描（約 10 秒）...'); 
+  const onOnce = (txt)=>{ 
+    document.getElementById('stationId').value = txt; 
+    console.log('✓ 站點碼已設定:', txt);
+    vibrate([50, 100, 50]);
+    beep();
+    codeReader.reset(); 
+  };
   // 單次掃描
+  console.log('開始單次掃描...');
   codeReader.decodeOnceFromVideoDevice(undefined, video).then(res=>{
+    console.log('✓ 掃描成功:', res.text);
     onOnce(res.text); 
   }).catch((e)=>{
     console.error('站點掃描失敗:', e);
-    alert('掃描失敗：' + (e.message || '請檢查相機權限'));
+    if (e.name === 'NotFoundException') {
+      alert('未偵測到條碼，請重試（確保光線充足、條碼清晰）');
+    } else {
+      alert('掃描失敗：' + (e.message || '請檢查相機權限'));
+    }
   });
 };
 
