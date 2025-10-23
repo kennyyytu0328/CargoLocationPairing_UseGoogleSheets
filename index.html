@@ -348,24 +348,42 @@ async function syncQueue(){
 /* ==============================
    5) 條碼掃描（ZXing）
    ============================== */
-const codeReader = new ZXing.BrowserMultiFormatReader();
+let codeReader;
+try {
+  codeReader = new ZXing.BrowserMultiFormatReader();
+} catch (e) {
+  console.error('ZXing 載入失敗:', e);
+  alert('條碼掃描功能載入失敗，請檢查網路連線');
+}
 const video = document.getElementById('video');
 let stream, currentTrack;
 
 async function startCamera(){
-  // 後鏡頭優先
-  stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
-  video.srcObject = stream; await video.play();
-  currentTrack = stream.getVideoTracks()[0];
-  setText('camInfo', currentTrack.getSettings().facingMode||'');
-  // 連續解碼
-  codeReader.decodeFromVideoDevice(null, video, (result, err)=>{
-    if(result){ onBarcode(result.getText()); }
-  });
+  if (!codeReader) {
+    alert('ZXing 條碼掃描功能未載入，請重新整理頁面');
+    return;
+  }
+  try {
+    // 後鏡頭優先
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+    video.srcObject = stream; await video.play();
+    currentTrack = stream.getVideoTracks()[0];
+    setText('camInfo', currentTrack.getSettings().facingMode||'');
+    // 連續解碼 - 使用 undefined 而非 null
+    codeReader.decodeFromVideoDevice(undefined, video, (result, err)=>{
+      if(result){ onBarcode(result.getText()); }
+    });
+  } catch (e) {
+    console.error('相機啟動失敗:', e);
+    alert('無法啟動相機：' + (e.message || '請檢查相機權限'));
+  }
 }
 function stopCamera(){
-  codeReader.reset();
+  if (codeReader) {
+    codeReader.reset();
+  }
   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+  setText('camInfo', '');
 }
 
 async function toggleTorch(){
@@ -509,12 +527,19 @@ document.getElementById('btnTorch').onclick = toggleTorch;
 document.getElementById('btnFocus').onclick = doFocus;
 
 document.getElementById('btnScanStation').onclick = ()=>{ 
+  if (!codeReader) {
+    alert('ZXing 條碼掃描功能未載入，請重新整理頁面');
+    return;
+  }
   alert('把鏡頭對準站點條碼後，再點一次此按鈕以套用'); 
   const onOnce = (txt)=>{ document.getElementById('stationId').value = txt; codeReader.reset(); };
   // 單次掃描
   codeReader.decodeOnceFromVideoDevice(undefined, video).then(res=>{
     onOnce(res.text); 
-  }).catch(()=>{});
+  }).catch((e)=>{
+    console.error('站點掃描失敗:', e);
+    alert('掃描失敗：' + (e.message || '請檢查相機權限'));
+  });
 };
 
 document.getElementById('btnSync').onclick = syncQueue;
