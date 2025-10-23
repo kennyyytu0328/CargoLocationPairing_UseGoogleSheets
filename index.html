@@ -350,18 +350,26 @@ async function syncQueue(){
    ============================== */
 let codeReader;
 try {
-  // 配置支援的條碼格式
+  // 配置支援的條碼格式（擴增更多常見格式）
   const hints = new Map();
   hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [
     ZXing.BarcodeFormat.EAN_13,
     ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.UPC_A,
+    ZXing.BarcodeFormat.UPC_E,
     ZXing.BarcodeFormat.CODE_128,
     ZXing.BarcodeFormat.CODE_39,
-    ZXing.BarcodeFormat.QR_CODE
+    ZXing.BarcodeFormat.CODE_93,
+    ZXing.BarcodeFormat.ITF,
+    ZXing.BarcodeFormat.CODABAR,
+    ZXing.BarcodeFormat.QR_CODE,
+    ZXing.BarcodeFormat.PDF_417,
+    ZXing.BarcodeFormat.AZTEC,
+    ZXing.BarcodeFormat.DATA_MATRIX
   ]);
   hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
   codeReader = new ZXing.BrowserMultiFormatReader(hints);
-  console.log('ZXing 已初始化，支援條碼格式：EAN-13/8, Code128/39, QR Code');
+  console.log('✓ ZXing 已初始化，支援條碼格式：EAN/UPC, Code128/39/93/ITF/Codabar, QR, PDF417, Aztec, DataMatrix');
 } catch (e) {
   console.error('ZXing 載入失敗:', e);
   alert('條碼掃描功能載入失敗，請檢查網路連線');
@@ -375,36 +383,53 @@ async function startCamera(){
     return;
   }
   try {
-    // 後鏡頭優先，提升分辨率和對焦參數
+    // 後鏡頭優先，優化分辨率以提高掃描速度與品質
     stream = await navigator.mediaDevices.getUserMedia({
       video:{
         facingMode:{ideal:'environment'},
-        width:{min:400, ideal:1280, max:1920},
-        height:{min:400, ideal:720, max:1080}
+        width:{ideal:1920, max:1920},
+        height:{ideal:1080, max:1080},
+        frameRate:{ideal:30}
       },
       audio:false
     });
     video.srcObject = stream; 
     await video.play();
     currentTrack = stream.getVideoTracks()[0];
-    setText('camInfo', currentTrack.getSettings().facingMode||'');
+    const settings = currentTrack.getSettings();
+    console.log('✓ 相機設定:', settings);
+    setText('camInfo', `${settings.facingMode||''} ${settings.width}x${settings.height}`);
     
-    // 嘗試開啟自動對焦
+    // 嘗試開啟自動對焦與優化
     try {
-      await currentTrack.applyConstraints({ advanced:[{ focusMode:'continuous' }] });
-    } catch(e) { console.warn('自動對焦設定失敗:', e); }
+      await currentTrack.applyConstraints({ 
+        advanced:[
+          { focusMode:'continuous' },
+          { exposureMode:'continuous' },
+          { whiteBalanceMode:'continuous' }
+        ] 
+      });
+      console.log('✓ 自動對焦、曝光、白平衡已啟用');
+    } catch(e) { console.warn('相機進階設定失敗:', e.message); }
     
-    // 連續解碼 - 使用 undefined 而非 null
-    console.log('開始解碼...');
+    // 連續解碼 - 忽略 NotFoundException（掃描中的正常狀態）
+    console.log('開始連續解碼...');
+    let lastErrorTime = 0;
     codeReader.decodeFromVideoDevice(undefined, video, (result, err)=>{
       if(result){ 
-        console.log('✓ 成功讀取條碼:', result.getText());
+        console.log('✓ 成功讀取條碼:', result.getText(), 'format:', result.getBarcodeFormat());
         onBarcode(result.getText()); 
       }
+      // 只顯示非 NotFoundException 的錯誤，且限制頻率（避免洗版）
       if(err && err.name !== 'NotFoundException') {
-        console.warn('解碼警告:', err.message);
+        const now = Date.now();
+        if(now - lastErrorTime > 5000) { // 每 5 秒最多顯示一次
+          console.warn('解碼警告:', err.message);
+          lastErrorTime = now;
+        }
       }
     });
+    console.log('提示：把條碼放在相機前 10-30cm，確保光線充足、條碼清晰');
   } catch (e) {
     console.error('相機啟動失敗:', e);
     alert('無法啟動相機：' + (e.message || '請檢查相機權限'));
