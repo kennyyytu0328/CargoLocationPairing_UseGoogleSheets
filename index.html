@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CP 資料綁定作業（前端版）</title>
+  <style>
+    *{box-sizing:border-box}
+    body{font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC","PingFang TC",sans-serif;margin:0;background:#0b1020;color:#e9eef7;font-size:14px}
+    header{padding:12px 16px;border-bottom:1px solid #1f2740;background:#0f1530;position:sticky;top:0;z-index:10}
+    h1{font-size:16px;margin:0}
+    main{padding:12px;max-width:980px;margin:auto}
+    .row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+    input,select,button,textarea{padding:10px 12px;border-radius:10px;border:1px solid #2b355a;background:#121a3c;color:#e9eef7;font-size:14px;min-width:0}
+    input,select{flex:1;min-width:120px}
+    button{cursor:pointer;white-space:nowrap}
+    .btn-primary{background:#3b82f6;border-color:#3b82f6}
+    .btn-ghost{background:#121a3c;border-color:#2b355a}
+    .card{border:1px solid #1f2740;border-radius:14px;padding:12px;background:#0e1431;margin-bottom:12px}
+    .muted{color:#9fb0d3;font-size:13px}
+    .ok{color:#86efac}
+    .warn{color:#fbbf24}
+    .err{color:#f87171}
+    video{width:100%;max-height:300px;background:#000;border-radius:12px}
+    .grid{display:grid;gap:10px}
+    .g2{grid-template-columns:1fr 1fr}
+    .pill{display:inline-block;padding:4px 8px;border-radius:999px;background:#182048;border:1px solid #263163;margin:2px;font-size:12px}
+    .tabbar{display:flex;gap:8px;margin:10px 0}
+    .tabbar button{flex:1;padding:8px}
+    .hidden{display:none!important}
+    small{opacity:.8;font-size:12px}
+
+    /* 手機適應 */
+    @media (max-width: 768px) {
+      body{font-size:13px}
+      h1{font-size:14px}
+      header{padding:8px 12px}
+      header .row{flex-direction:column;gap:6px;align-items:flex-start!important}
+      main{padding:8px}
+      .grid.g2{grid-template-columns:1fr}
+      .card{padding:10px;margin-bottom:10px}
+      input,select,button{padding:8px 10px;font-size:13px}
+      .pill{padding:3px 6px;font-size:11px;margin:1px}
+      .tabbar button{padding:6px;font-size:13px}
+      .row{gap:6px;margin:6px 0}
+      video{max-height:200px}
+      small{font-size:11px}
+      .muted{font-size:12px}
+    }
+
+    @media (max-width: 480px) {
+      h1{font-size:13px}
+      input,select,button{padding:6px 8px;font-size:12px}
+      .card{padding:8px}
+      .pill{font-size:10px}
+    }
+  </style>
+  <!-- ZXing 條碼掃描 -->
+  <script src="https://unpkg.com/@zxing/library@0.21.3"></script>
+  <!-- Google Identity Services -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<header>
+  <div>
+    <h1>CP 資料綁定作業（前端→Google Sheets）</h1>
+    <div class="muted" id="envInfo"></div>
+  </div>
+  <div class="row status-badges" style="align-items:center;margin-top:8px">
+    <span class="pill" id="netBadge">離線</span>
+    <span class="pill" id="authBadge">未登入</span>
+    <span class="pill" id="sheetBadge">未連線</span>
+    <span class="pill" id="queueBadge">待傳 0</span>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <div class="grid g2">
+      <div>
+        <label>操作人姓名</label>
+        <input id="operatorName" placeholder="輸入姓名" />
+      </div>
+      <div>
+        <label>工作站（station_id）</label>
+        <div class="row">
+          <input id="stationId" placeholder="掃碼或輸入站點代碼" />
+          <button class="btn-ghost" id="btnScanStation">掃站點</button>
+        </div>
+      </div>
+      <div>
+        <label>來源別（source_type）</label>
+        <select id="sourceType">
+          <option>GCGP</option>
+          <option>RCRT</option>
+          <option selected>OTHER</option>
+        </select>
+      </div>
+      <div class="row" style="align-items:flex-end;justify-content:flex-end">
+        <button id="btnLogin" class="btn-primary">Google 登入以啟用上傳</button>
+      </div>
+    </div>
+    <div class="muted" id="tips"></div>
+  </section>
+
+  <section class="card">
+    <div class="tabbar">
+      <button id="tabInbound" class="btn-primary">進貨綁定</button>
+      <button id="tabStaging" class="btn-ghost">暫存綁定</button>
+      <button id="tabQuery" class="btn-ghost">查詢（最近）</button>
+    </div>
+
+    <!-- 相機區 -->
+    <div id="cameraPanel">
+      <video id="video" playsinline></video>
+      <div class="row">
+        <button id="btnStartCam" class="btn-ghost">開啟相機</button>
+        <button id="btnStopCam" class="btn-ghost">關閉相機</button>
+        <button id="btnTorch" class="btn-ghost">手電筒</button>
+        <button id="btnFocus" class="btn-ghost">對焦</button>
+        <span class="muted" id="camInfo"></span>
+      </div>
+      <div class="muted">支援：EAN-13 / Code128 / Code39 / QR。掃不到可改人工輸入。</div>
+    </div>
+
+    <!-- 進貨綁定 -->
+    <div id="pageInbound">
+      <div class="row">
+        <div class="card" style="flex:1">
+          <div class="row">
+            <strong>棧板碼</strong>
+            <span id="palletNow" class="pill muted">未設定</span>
+          </div>
+          <div class="row">
+            <input id="palletInput" placeholder="掃不到可手動輸入棧板碼" />
+            <button id="btnSetPallet" class="btn-ghost">設定棧板</button>
+          </div>
+        </div>
+        <div class="card" style="flex:2">
+          <div class="row">
+            <strong>貨件碼（逐件上傳）</strong>
+          </div>
+          <div class="row">
+            <input id="itemInput" placeholder="掃不到可手動輸入貨件碼" />
+            <button id="btnPushItem" class="btn-ghost">上傳一件</button>
+          </div>
+          <div id="recentItems" class="muted"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 暫存綁定 -->
+    <div id="pageStaging" class="hidden">
+      <div class="row">
+        <div class="card" style="flex:1">
+          <div class="row"><strong>貨件或棧板碼</strong></div>
+          <div class="row">
+            <input id="targetInput" placeholder="掃不到可手動輸入 item/pallet" />
+          </div>
+        </div>
+        <div class="card" style="flex:1">
+          <div class="row"><strong>區位碼（zone_code）</strong></div>
+          <div class="row">
+            <input id="zoneInput" placeholder="掃不到可手動輸入區位" />
+            <button id="btnPushStaging" class="btn-ghost">上傳一筆</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 查詢 -->
+    <div id="pageQuery" class="hidden">
+      <div class="row">
+        <input id="queryCode" placeholder="輸入 item/pallet 查最近 50 筆" />
+        <button id="btnQuery" class="btn-ghost">查詢</button>
+      </div>
+      <div id="queryResult" class="muted"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div>
+        <button id="btnSync" class="btn-primary">手動同步（上傳待傳佇列）</button>
+        <button id="btnClearQueue" class="btn-ghost">清空待傳</button>
+      </div>
+      <small class="muted">DeviceID: <span id="deviceId"></span></small>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ==============================
+   1) 你要替換的常數
+   ============================== */
+const CLIENT_ID = '526181251563-2aj86houbrfktjtg7ldiqdmuc9nopn5n.apps.googleusercontent.com'; // OAuth 2.0 Client ID
+const REGISTRY_SHEET_ID = '1UidAcnlKrTZqJz_AN9QkZBdTmOzH0bGjhJKquvYij60'; // /d/{ID}/edit
+const REGISTRY_RANGE = 'registry!A2:B10'; // key-value
+const DATA_SHEET_NAME = 'data'; // 模板內的工作表名
+// Scopes：讀 registry + 寫 data
+const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/spreadsheets.readonly';
+
+/* ==============================
+   2) 全域狀態
+   ============================== */
+let accessToken = null;
+let currentSheetId = null; // 由 registry 取得
+let opBatchId = null;      // 設定棧板時產生
+let palletCode = null;
+let deviceId = localStorage.getItem('wmscp_device_id') || (crypto.randomUUID());
+localStorage.setItem('wmscp_device_id', deviceId);
+document.getElementById('deviceId').textContent = deviceId;
+
+/* IndexedDB（離線佇列） */
+const DB_NAME = 'wmscp';
+const STORE = 'queue';
+let db;
+const openDB = () => new Promise((resolve,reject)=>{
+  const req = indexedDB.open(DB_NAME,1);
+  req.onupgradeneeded = e => {
+    e.target.result.createObjectStore(STORE,{keyPath:'req_id'});
+  };
+  req.onsuccess = e => { db = e.target.result; resolve(); };
+  req.onerror = e => reject(e.target.error);
+});
+
+const idbAdd = (obj) => new Promise((res,rej)=>{
+  const tx = db.transaction(STORE,'readwrite');
+  tx.objectStore(STORE).put(obj);
+  tx.oncomplete = ()=>res();
+  tx.onerror = e=>rej(e.target.error);
+});
+const idbAll = () => new Promise((res,rej)=>{
+  const tx = db.transaction(STORE,'readonly');
+  const req = tx.objectStore(STORE).getAll();
+  req.onsuccess = ()=>res(req.result||[]);
+  req.onerror = e=>rej(e.target.error);
+});
+const idbDel = (key) => new Promise((res,rej)=>{
+  const tx = db.transaction(STORE,'readwrite');
+  tx.objectStore(STORE).delete(key);
+  tx.oncomplete = ()=>res();
+  tx.onerror = e=>rej(e.target.error);
+});
+const updateQueueBadge = async ()=>{
+  const arr = await idbAll();
+  document.getElementById('queueBadge').textContent = `待傳 ${arr.length}`;
+};
+
+/* 網路狀態徽章 */
+const netBadge = document.getElementById('netBadge');
+const setNet = ()=>{ netBadge.textContent = navigator.onLine?'上線':'離線'; };
+window.addEventListener('online', setNet);
+window.addEventListener('offline', setNet);
+setNet();
+
+/* UI 小工具 */
+const beep = ()=>{ try{ new AudioContext().createOscillator().start(0); }catch{} };
+const vibrate = (ms=30)=>{ if(navigator.vibrate) navigator.vibrate(ms); };
+const setText = (id,txt)=>document.getElementById(id).textContent=txt;
+const nowISO = ()=> new Date().toISOString();
+
+/* ==============================
+   3) Google 登入 & Registry 讀取
+   ============================== */
+function getToken() {
+  return new Promise((resolve, reject) => {
+    google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      prompt: '',
+      callback: (resp) => {
+        if(resp && resp.access_token){ accessToken = resp.access_token; setText('authBadge','已登入'); resolve(); }
+        else reject('no token');
+      }
+    }).requestAccessToken();
+  });
+}
+
+async function fetchRegistry() {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${REGISTRY_SHEET_ID}/values/${encodeURIComponent(REGISTRY_RANGE)}`;
+  const res = await fetch(url,{headers:{Authorization:`Bearer ${accessToken}`}});
+  if(res.status===401){ accessToken=null; await getToken(); return fetchRegistry(); }
+  if(!res.ok) throw new Error(await res.text());
+  const js = await res.json();
+  const kv = {};
+  (js.values||[]).forEach(([k,v])=>{ if(k) kv[String(k).trim()] = String(v||'').trim(); });
+  currentSheetId = kv['current_sheet_id'] || null;
+  if(currentSheetId){ setText('sheetBadge','已連線'); }
+  else { setText('sheetBadge','未連線'); }
+}
+
+/* ==============================
+   4) Sheets API 寫入
+   ============================== */
+async function appendRow(values) {
+  if(!accessToken) await getToken();
+  if(!currentSheetId) await fetchRegistry();
+
+  const range = `${DATA_SHEET_NAME}!A:N`; // 13 欄
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${currentSheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+  const res = await fetch(url,{
+    method:'POST',
+    headers:{ 'Authorization':`Bearer ${accessToken}`, 'Content-Type':'application/json' },
+    body: JSON.stringify({ values:[values] })
+  });
+  if(res.status===401){ accessToken=null; return appendRow(values); }
+  if(res.status===403) throw new Error('沒有這份試算表的編輯權限（請把你的帳號加為 Editor）。');
+  if(!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/* 封裝：線上則立即上傳；離線則入佇列 */
+async function sendOrQueue(payload){
+  if(navigator.onLine && accessToken && currentSheetId){
+    try{
+      await appendRow(payload);
+      await updateQueueBadge();
+      return true;
+    }catch(e){
+      console.warn('立即上傳失敗，改存佇列', e);
+      await idbAdd({req_id: payload[10], payload});
+      await updateQueueBadge();
+      return false;
+    }
+  }else{
+    await idbAdd({req_id: payload[10], payload});
+    await updateQueueBadge();
+    return false;
+  }
+}
+
+/* 手動同步 */
+async function syncQueue(){
+  const all = await idbAll();
+  for(const it of all){
+    try{
+      await appendRow(it.payload);
+      await idbDel(it.req_id);
+    }catch(e){
+      console.error('補傳失敗，稍後重試', e);
+      break;
+    }
+  }
+  await updateQueueBadge();
+}
+
+/* ==============================
+   5) 條碼掃描（ZXing）
+   ============================== */
+const codeReader = new ZXing.BrowserMultiFormatReader();
+const video = document.getElementById('video');
+let stream, currentTrack;
+
+async function startCamera(){
+  // 後鏡頭優先
+  stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}, audio:false});
+  video.srcObject = stream; await video.play();
+  currentTrack = stream.getVideoTracks()[0];
+  setText('camInfo', currentTrack.getSettings().facingMode||'');
+  // 連續解碼
+  codeReader.decodeFromVideoDevice(null, video, (result, err)=>{
+    if(result){ onBarcode(result.getText()); }
+  });
+}
+function stopCamera(){
+  codeReader.reset();
+  if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+}
+
+async function toggleTorch(){
+  if(!currentTrack) return;
+  try{
+    await currentTrack.applyConstraints({ advanced:[{ torch: true }] });
+    setTimeout(()=> currentTrack.applyConstraints({ advanced:[{ torch: false }] }), 600);
+  }catch{ alert('此裝置不支援手電筒'); }
+}
+async function doFocus(){
+  if(!currentTrack) return;
+  try{
+    await currentTrack.applyConstraints({ advanced:[{ focusMode:'continuous' }] });
+  }catch{ alert('此裝置不支援對焦控制'); }
+}
+
+/* 條碼回調：依目前頁面狀態路由 */
+function onBarcode(text){
+  vibrate(20); beep();
+  const activeInbound = !document.getElementById('pageInbound').classList.contains('hidden');
+  const activeStaging = !document.getElementById('pageStaging').classList.contains('hidden');
+  if(activeInbound){
+    // 先有棧板，之後都當作 item
+    if(!palletCode){ document.getElementById('palletInput').value = text; } 
+    else { document.getElementById('itemInput').value = text; pushItem(); }
+  }else if(activeStaging){
+    const t = document.getElementById('targetInput').value;
+    if(!t){ document.getElementById('targetInput').value = text; }
+    else { document.getElementById('zoneInput').value = text; pushStaging(); }
+  }else{
+    document.getElementById('queryCode').value = text;
+  }
+}
+
+/* ==============================
+   6) 業務流程：進貨綁定 / 暫存綁定
+   ============================== */
+function requireBasics(){
+  const name = document.getElementById('operatorName').value.trim();
+  const station = document.getElementById('stationId').value.trim();
+  if(!name) { alert('請輸入操作人姓名'); return null; }
+  if(!station){ alert('請設定工作站 station_id（可掃碼或輸入）'); return null; }
+  return {name, station};
+}
+
+document.getElementById('btnSetPallet').onclick = ()=>{
+  const basics = requireBasics(); if(!basics) return;
+  const val = document.getElementById('palletInput').value.trim();
+  if(!val){ alert('請輸入/掃描棧板碼'); return; }
+  palletCode = val;
+  opBatchId = crypto.randomUUID();
+  setText('palletNow', palletCode + ' （批次 ' + opBatchId.slice(0,8) + '）');
+  document.getElementById('itemInput').focus();
+};
+
+async function pushItem(){
+  const basics = requireBasics(); if(!basics) return;
+  if(!palletCode){ alert('請先設定棧板碼'); return; }
+  const item = document.getElementById('itemInput').value.trim();
+  if(!item){ alert('請輸入/掃描貨件碼'); return; }
+  const sourceType = document.getElementById('sourceType').value;
+  const clientTs = new Date().toISOString();
+  const reqId = crypto.randomUUID();
+
+  // 欄位順序：
+  // ts_server(空) client_ts operator_name station_id op_type op_batch_id pallet_code item_code zone_code source_type req_id device_id note
+  const payload = ['', clientTs, basics.name, basics.station, 'BIND_INBOUND', opBatchId, palletCode, item, '', sourceType, reqId, deviceId, ''];
+  await sendOrQueue(payload);
+
+  document.getElementById('itemInput').value='';
+  const r = document.getElementById('recentItems');
+  r.textContent = `[${new Date().toLocaleTimeString()}] ${item} 已提交`;
+}
+
+document.getElementById('btnPushItem').onclick = pushItem;
+
+async function pushStaging(){
+  const basics = requireBasics(); if(!basics) return;
+  const target = document.getElementById('targetInput').value.trim();
+  const zone = document.getElementById('zoneInput').value.trim();
+  if(!target){ alert('請輸入/掃描 貨件/棧板碼'); return; }
+  if(!zone){ alert('請輸入/掃描 區位碼'); return; }
+  const sourceType = document.getElementById('sourceType').value;
+  const isPallet = /^PLT|^pallet/i.test(target); // 如需更嚴謹再調整
+  const clientTs = new Date().toISOString();
+  const reqId = crypto.randomUUID();
+
+  const payload = ['', clientTs, basics.name, basics.station, 'BIND_STAGING',
+                   opBatchId || '', isPallet? target: (palletCode||''), !isPallet? target:'', zone,
+                   sourceType, reqId, deviceId, ''];
+  await sendOrQueue(payload);
+
+  document.getElementById('targetInput').value='';
+  document.getElementById('zoneInput').value='';
+  alert('已上傳一筆暫存綁定');
+}
+
+/* ==============================
+   7) 查詢（最近 50 筆，簡易）
+   ============================== */
+async function queryRecent(){
+  if(!accessToken) await getToken();
+  if(!currentSheetId) await fetchRegistry();
+  const code = document.getElementById('queryCode').value.trim();
+  const range = `${DATA_SHEET_NAME}!A:N`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${currentSheetId}/values/${encodeURIComponent(range)}?majorDimension=ROWS`;
+  const res = await fetch(url,{headers:{Authorization:`Bearer ${accessToken}`}});
+  if(!res.ok){ document.getElementById('queryResult').textContent = await res.text(); return;}
+  const js = await res.json();
+  const rows = (js.values||[]).slice(-200).reverse(); // 只掃尾端 200 筆提高效能
+  const hit = rows.filter(r => (r[6]||'')===code || (r[7]||'')===code).slice(0,50);
+  const html = hit.map(r=>`${r[0]||''} [${r[4]}] pallet=${r[6]||''} item=${r[7]||''} zone=${r[8]||''} by ${r[2]||''}`).join('<br/>');
+  document.getElementById('queryResult').innerHTML = html || '無資料';
+}
+
+/* ==============================
+   8) 事件綁定 / 初始化
+   ============================== */
+document.getElementById('btnLogin').onclick = async ()=>{
+  await getToken();
+  await fetchRegistry();
+  alert('登入成功，已連線當日資料表。');
+};
+
+document.getElementById('btnStartCam').onclick = startCamera;
+document.getElementById('btnStopCam').onclick = stopCamera;
+document.getElementById('btnTorch').onclick = toggleTorch;
+document.getElementById('btnFocus').onclick = doFocus;
+
+document.getElementById('btnScanStation').onclick = ()=>{ 
+  alert('把鏡頭對準站點條碼後，再點一次此按鈕以套用'); 
+  const onOnce = (txt)=>{ document.getElementById('stationId').value = txt; codeReader.reset(); };
+  // 單次掃描
+  codeReader.decodeOnceFromVideoDevice(undefined, video).then(res=>{
+    onOnce(res.text); 
+  }).catch(()=>{});
+};
+
+document.getElementById('btnSync').onclick = syncQueue;
+document.getElementById('btnClearQueue').onclick = async ()=>{
+  const all = await idbAll();
+  for(const it of all){ await idbDel(it.req_id); }
+  await updateQueueBadge();
+  alert('已清空待傳佇列');
+};
+
+document.getElementById('tabInbound').onclick = ()=>{
+  document.getElementById('pageInbound').classList.remove('hidden');
+  document.getElementById('pageStaging').classList.add('hidden');
+  document.getElementById('pageQuery').classList.add('hidden');
+  document.getElementById('tabInbound').className='btn-primary';
+  document.getElementById('tabStaging').className='btn-ghost';
+  document.getElementById('tabQuery').className='btn-ghost';
+};
+document.getElementById('tabStaging').onclick = ()=>{
+  document.getElementById('pageInbound').classList.add('hidden');
+  document.getElementById('pageStaging').classList.remove('hidden');
+  document.getElementById('pageQuery').classList.add('hidden');
+  document.getElementById('tabInbound').className='btn-ghost';
+  document.getElementById('tabStaging').className='btn-primary';
+  document.getElementById('tabQuery').className='btn-ghost';
+};
+document.getElementById('tabQuery').onclick = ()=>{
+  document.getElementById('pageInbound').classList.add('hidden');
+  document.getElementById('pageStaging').classList.add('hidden');
+  document.getElementById('pageQuery').classList.remove('hidden');
+  document.getElementById('tabInbound').className='btn-ghost';
+  document.getElementById('tabStaging').className='btn-ghost';
+  document.getElementById('tabQuery').className='btn-primary';
+};
+document.getElementById('btnQuery').onclick = queryRecent;
+
+/* 初始化 */
+(async ()=>{
+  document.getElementById('envInfo').textContent = `localhost:8000 · ${new Date().toLocaleString()}`;
+  await openDB();
+  await updateQueueBadge();
+})();
+</script>
+</body>
+</html>
