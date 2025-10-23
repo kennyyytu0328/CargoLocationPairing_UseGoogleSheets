@@ -422,6 +422,7 @@ document.getElementById('btnSetPallet').onclick = ()=>{
 };
 
 async function pushItem(){
+  if(!accessToken){ alert('請先登入 Google 帳號以啟用上傳功能'); return; }
   const basics = requireBasics(); if(!basics) return;
   if(!palletCode){ alert('請先設定棧板碼'); return; }
   const item = document.getElementById('itemInput').value.trim();
@@ -433,17 +434,24 @@ async function pushItem(){
   // 欄位順序：
   // ts_server(空) client_ts operator_name station_id op_type op_batch_id pallet_code item_code zone_code source_type req_id device_id note
   const payload = ['', clientTs, basics.name, basics.station, 'BIND_INBOUND', opBatchId, palletCode, item, '', sourceType, reqId, deviceId, ''];
-  await sendOrQueue(payload);
-
+  const success = await sendOrQueue(payload);
+  
   document.getElementById('itemInput').value='';
   const r = document.getElementById('recentItems');
-  r.textContent = `[${new Date().toLocaleTimeString()}] ${item} 已提交`;
+  if(success){
+    r.textContent = `[${new Date().toLocaleTimeString()}] ${item} 已上傳`;
+    r.className = 'muted ok';
+  }else{
+    r.textContent = `[${new Date().toLocaleTimeString()}] ${item} 已存至佇列（離線模式）`;
+    r.className = 'muted warn';
+  }
 }
 
 document.getElementById('btnPushItem').onclick = pushItem;
 document.getElementById('btnPushStaging').onclick = pushStaging;
 
 async function pushStaging(){
+  if(!accessToken){ alert('請先登入 Google 帳號以啟用上傳功能'); return; }
   const basics = requireBasics(); if(!basics) return;
   const target = document.getElementById('targetInput').value.trim();
   const zone = document.getElementById('zoneInput').value.trim();
@@ -457,11 +465,15 @@ async function pushStaging(){
   const payload = ['', clientTs, basics.name, basics.station, 'BIND_STAGING',
                    opBatchId || '', isPallet? target: (palletCode||''), !isPallet? target:'', zone,
                    sourceType, reqId, deviceId, ''];
-  await sendOrQueue(payload);
+  const success = await sendOrQueue(payload);
 
   document.getElementById('targetInput').value='';
   document.getElementById('zoneInput').value='';
-  alert('已上傳一筆暫存綁定');
+  if(success){
+    alert('已上傳一筆暫存綁定');
+  }else{
+    alert('網路離線，已存至佇列（待網路恢復後自動同步）');
+  }
 }
 
 /* ==============================
